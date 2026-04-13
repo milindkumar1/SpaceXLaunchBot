@@ -17,3 +17,4 @@ LICENSE
 requirements-dev.txt
 setup.cfg
 variables.env
+.env

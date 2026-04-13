@@ -47,36 +47,6 @@ class SpaceXLaunchBotClient(discord.Client):
                     s, lambda sig=s: self.loop.create_task(self.shutdown(sig=sig))
                 )
 
-        logging.info("Creating a connection pool for DB")
-        self.db_pool = await asyncpg.create_pool(
-            user=config.DB_USER,
-            password=config.DB_PASS,
-            host=config.DB_HOST,
-            port=config.DB_PORT,
-            database=config.DB_NAME,
-            min_size=config.DB_POOL_MIN_CONNECTIONS,
-            max_size=config.DB_POOL_MAX_CONNECTIONS,
-        )
-        logging.info(
-            f"Pooled with {self.db_pool.get_size()}/{self.db_pool.get_max_size()} connections"
-        )
-
-        logging.getLogger().addHandler(
-            PostgresLogger(config.LOG_FORMAT, self.loop, self.db_pool)
-        )
-        logging.info("Initialised Postgres logger")
-
-        self.ds = storage.DataStore(
-            self.db_pool,
-            config.PICKLE_DUMP_LOCATION,
-        )
-        logging.info("Data storage initialised")
-
-        self.healthcheck_server = await discordhealthcheck.start(self)
-        logging.info("Started healthcheck server")
-
-        self.notification_task = self.loop.create_task(self.start_notification_loop())
-        self.counts_task = self.loop.create_task(self.start_db_counts_loop())
         self.loop.create_task(self.start_dummy_server())
 
         self.dc_logger: Union[asyncio.Task, None] = None
@@ -212,17 +182,12 @@ class SpaceXLaunchBotClient(discord.Client):
         if sig is not None:
             logging.info(f"Shutdown due to signal: {sig.name}")
 
-        logging.info("Cancelling notification_task")
-        self.notification_task.cancel()
-        await self.notification_task
-
-        logging.info("Cancelling counts_task")
-        self.counts_task.cancel()
-        await self.counts_task
-
-        logging.info("Closing healthcheck server")
-        self.healthcheck_server.close()
-        await self.healthcheck_server.wait_closed()
+        try:
+            logging.info("Closing healthcheck server")
+            self.healthcheck_server.close()
+            await self.healthcheck_server.wait_closed()
+        except:
+            pass
 
         logging.info("Goodbye")
         await self.close()
@@ -310,38 +275,7 @@ class SpaceXLaunchBotClient(discord.Client):
     # TODO: Consolidate shared code into boilerplate method.
     #
 
-    async def start_db_counts_loop(self) -> None:
-        """A loop that every hour sends the guild and subscribed counts to the db."""
-        logging.info("Waiting for client ready")
-        await self.wait_until_ready()
-        logging.info("Starting")
-
-        while not self.is_closed():
-            try:
-                await self.ds.update_counts(len(self.guilds))
-                await asyncio.sleep(ONE_MINUTE * 60)
-            except asyncio.CancelledError:
-                logging.info("Cancelled, stopping")
-                break
-
-        logging.info("Loop finished")
-
-    async def start_notification_loop(self) -> None:
-        """A loop that sends out launching soon & launch info notifications."""
-        logging.info("Waiting for client ready")
-        await self.wait_until_ready()
-        logging.info("Starting")
-
-        while not self.is_closed():
-            try:
-                await check_and_send_notifications(self)
-                await asyncio.sleep(ONE_MINUTE * config.NOTIF_TASK_INTERVAL)
-            except asyncio.CancelledError:
-                logging.info("Cancelled, stopping")
-                break
-
-        logging.info("Loop finished, saving data")
-        self.ds.save_state()
+    # Background notifications and DB tasks are disabled for the User App.
 
     #
     # Slash command helpers
@@ -362,7 +296,6 @@ class SpaceXLaunchBotClient(discord.Client):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_next_launch(self, interaction: discord.Interaction):
-        await self.ds.register_metric("command_next_launch", str(interaction.guild_id))
         response: discord.Embed
         next_launch_dict = await apis.ll2.get_launch_dict()
         if next_launch_dict == {}:
@@ -390,89 +323,32 @@ class SpaceXLaunchBotClient(discord.Client):
         notification_type: str,
         notification_mentions: str | None = None,
     ):
-        if self.interaction_from_admin(interaction) is False:
-            await interaction.response.send_message(
-                embed=embeds.ADMIN_PERMISSION_REQUIRED
+        await interaction.response.send_message(
+            embed=embeds.create_interaction_embed(
+                "Notification subscriptions are disabled in this simplified version of the bot.",
+                success=False,
             )
-            return
-
-        await self.ds.register_metric("command_add", str(interaction.guild_id))
-
-        try:
-            notification_type = NotificationType[notification_type]  # type: ignore
-        except KeyError:
-            await interaction.response.send_message(
-                embed=embeds.create_interaction_embed(
-                    'Invalid notification type, try "all", "schedule", or "launch"',
-                    success=False,
-                )
-            )
-            return
-
-        response: discord.Embed
-        added = await self.ds.add_subbed_channel(
-            str(interaction.channel_id),
-            interaction.channel.name,  # type: ignore
-            str(interaction.guild_id),
-            notification_type,
-            notification_mentions,
         )
 
-        if added is False:
-            response = embeds.create_interaction_embed(
-                "This channel is already subscribed to the notification service",
-                success=False,
-            )
-        else:
-            logging.info(f"{interaction.channel_id} subscribed to {notification_type}")
-            response = embeds.create_interaction_embed(
-                "This channel has been added to the notification service"
-            )
-
-        await interaction.response.send_message(embed=response)
-
     async def command_remove(self, interaction: discord.Interaction):
-        if self.interaction_from_admin(interaction) is False:
-            await interaction.response.send_message(
-                embed=embeds.ADMIN_PERMISSION_REQUIRED
-            )
-            return
-
-        await self.ds.register_metric("command_remove", str(interaction.guild_id))
-
-        response: discord.Embed
-
-        cid = str(interaction.channel_id)
-        if await self.ds.remove_subbed_channel(cid) is False:
-            response = embeds.create_interaction_embed(
-                "This channel was not previously subscribed to the notification service",
+        await interaction.response.send_message(
+            embed=embeds.create_interaction_embed(
+                "Notification subscriptions are disabled in this simplified version of the bot.",
                 success=False,
             )
-        else:
-            logging.info(f"{interaction.channel_id} unsubscribed")
-            response = embeds.create_interaction_embed(
-                "This channel has been removed from the notification service"
-            )
-        await interaction.response.send_message(embed=response)
+        )
 
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_info(self, interaction: discord.Interaction):
-        await self.ds.register_metric("command_info", str(interaction.guild_id))
-
         guild_count = len(self.guilds)
-        channel_count = await self.ds.subbed_channels_count()
-
-        old_guild_count, old_channel_count = await self.ds.day_old_counts()
-        guild_count_diff = guild_count - old_guild_count
-        channel_cout_diff = channel_count - old_channel_count
 
         await interaction.response.send_message(
             embed=embeds.create_info_embed(
                 guild_count,
-                guild_count_diff,
-                channel_count,
-                channel_cout_diff,
+                0,
+                0,
+                0,
                 self.latency_ms,
             )
         )
@@ -480,5 +356,4 @@ class SpaceXLaunchBotClient(discord.Client):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_help(self, interaction: discord.Interaction):
-        await self.ds.register_metric("command_help", str(interaction.guild_id))
         await interaction.response.send_message(embed=embeds.HELP_EMBED)
