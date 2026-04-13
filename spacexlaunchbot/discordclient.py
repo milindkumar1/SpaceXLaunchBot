@@ -2,7 +2,9 @@ import asyncio
 import logging
 import platform
 import signal
+import os
 from typing import Union
+from aiohttp import web
 
 import asyncpg
 import discord
@@ -75,6 +77,7 @@ class SpaceXLaunchBotClient(discord.Client):
 
         self.notification_task = self.loop.create_task(self.start_notification_loop())
         self.counts_task = self.loop.create_task(self.start_db_counts_loop())
+        self.loop.create_task(self.start_dummy_server())
 
         self.dc_logger: Union[asyncio.Task, None] = None
 
@@ -82,6 +85,20 @@ class SpaceXLaunchBotClient(discord.Client):
     def latency_ms(self) -> int:
         """Converts the latency property to an int representing the value in ms."""
         return int(self.latency * 1000)
+
+    async def start_dummy_server(self):
+        """Starts a dummy web server so Render sees this as a Web Service and gives it the Free Tier."""
+        async def handle(request):
+            return web.Response(text="Bot is awake!")
+            
+        app = web.Application()
+        app.router.add_get('/', handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = int(os.environ.get("PORT", 8080))
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        logging.info(f"Started dummy web server on port {port}")
 
     #
     # on_ methods
