@@ -342,6 +342,8 @@ class SpaceXLaunchBotClient(discord.Client):
     # Slash commands
     #
 
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_next_launch(self, interaction: discord.Interaction):
         await self.ds.register_metric("command_next_launch", str(interaction.guild_id))
         response: discord.Embed
@@ -436,6 +438,8 @@ class SpaceXLaunchBotClient(discord.Client):
             )
         await interaction.response.send_message(embed=response)
 
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_info(self, interaction: discord.Interaction):
         await self.ds.register_metric("command_info", str(interaction.guild_id))
 
@@ -456,6 +460,8 @@ class SpaceXLaunchBotClient(discord.Client):
             )
         )
 
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def command_help(self, interaction: discord.Interaction):
         await self.ds.register_metric("command_help", str(interaction.guild_id))
         await interaction.response.send_message(embed=embeds.HELP_EMBED)
